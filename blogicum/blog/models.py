@@ -6,6 +6,7 @@ from django.db import models
 User = get_user_model()
 
 CHAR_LIMIT = 256
+COMMENT_PREVIEW_LENGTH = 50
 
 
 class PublishedCreatedModel(models.Model):
@@ -109,14 +110,30 @@ class Post(PublishedCreatedModel):
 class Comment(models.Model):
     """Модель комментария."""
 
-    text = models.TextField('Текст комментария')
+    text = models.TextField(verbose_name='Текст комментария')
     post = models.ForeignKey(
         Post,
         on_delete=models.CASCADE,
+        verbose_name='Пост'
     )
-    created_at = models.DateTimeField(auto_now_add=True)
-    author = models.ForeignKey(User, on_delete=models.CASCADE)
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name='Дата создания',
+    )
+    author = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        verbose_name='Автор'
+    )
 
     class Meta:
+        verbose_name = 'комментарий'
+        verbose_name_plural = 'комментарии'
         ordering = ('created_at',)
         default_related_name = 'comments'
+
+    def __str__(self):
+        preview = (self.text[:COMMENT_PREVIEW_LENGTH - 3] + '…'
+                   if len(self.text) > COMMENT_PREVIEW_LENGTH else self.text)
+        return (f'Комментарий {self.author.username} к "{self.post.title}": '
+                f'{preview}')

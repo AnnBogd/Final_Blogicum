@@ -1,12 +1,13 @@
 """View-функции для приложения blog."""
 
-from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
+from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib.auth.models import AbstractBaseUser
 from django.contrib.auth import get_user_model
 from django.db.models import Count, QuerySet
-from django.http import HttpResponse, HttpRequest
-from django.shortcuts import get_object_or_404, redirect
+from django.http import Http404, HttpResponse
+from django.shortcuts import get_object_or_404
 from django.urls import reverse
+from django.utils.functional import cached_property
 from django.utils import timezone
 from django.views.generic import (
     CreateView,
@@ -16,70 +17,28 @@ from django.views.generic import (
     UpdateView,
 )
 
-from .models import Category, Comment, Post
+from .mixins import CommentMixin, OnlyAuthorMixin
+from .models import Category, Post
 from .forms import CommentForm, PostForm, UserProfileForm
 
 POSTS_LIMIT = 10
 User = get_user_model()
 
 
-def get_published_posts() -> QuerySet:
-    """Вернуть QuerySet с опубликованными постами."""
-    return (
-        Post.objects
-        .select_related('location', 'author', 'category')
-        .annotate(comment_count=Count('comments'))
-        .filter(
+def get_posts_queryset(is_filtered=False, is_annotate=False) -> QuerySet:
+    """Вернуть QuerySet с опубликованными постами и доп параметрами."""
+    queryset = Post.objects.select_related('location', 'author', 'category')
+    if is_filtered:
+        queryset = queryset.filter(
             pub_date__lte=timezone.now(),
             is_published=True,
             category__is_published=True,
         )
-        .order_by('-pub_date')
-    )
-
-
-class OnlyAuthorMixin(UserPassesTestMixin):
-    """Миксин для проверки автора поста или комментария.
-
-    Если пользователь не автор — редирект на страницу просмотра поста.
-    """
-
-    def test_func(self) -> bool:
-        """Проверить, является ли пользователь автором объекта."""
-        return (self.request.user.is_authenticated
-                and self.get_object().author == self.request.user)
-
-    def handle_no_permission(self):
-        """Редирект на страницу просмотра поста."""
-        return redirect(
-            'blog:post_detail',
-            post_id=self.kwargs['post_id']
-        )
-
-
-class PostObjectMixin:
-    """Переопределяет получение объекта поста по его id."""
-
-    def get_object(self, queryset: QuerySet = None) -> Post:
-        """Получить нужный пост по его id."""
-        return get_object_or_404(Post, pk=self.kwargs['post_id'])
-
-
-class CommentMixin:
-    """Переопределяет методы получения объекта, редиректа и поле модели."""
-
-    model = Comment
-
-    def get_object(self, queryset: QuerySet = None) -> Comment:
-        """Получить нужный комментарий по его id."""
-        return get_object_or_404(Comment, pk=self.kwargs['comment_id'])
-
-    def get_success_url(self) -> str:
-        """Настроить динамический редирект после удаления комментария."""
-        return reverse(
-            'blog:post_detail',
-            kwargs={'post_id': self.kwargs['post_id']}
-        )
+    if is_annotate:
+        queryset = (queryset
+                    .annotate(comment_count=Count('comments'))
+                    .order_by('-pub_date'))
+    return queryset
 
 
 class ProfileListView(ListView):
@@ -92,28 +51,22 @@ class ProfileListView(ListView):
     paginate_by = POSTS_LIMIT
     template_name = 'blog/profile.html'
 
+    @cached_property
+    def profile_user(self) -> AbstractBaseUser:
+        """Получить объект пользователя."""
+        return get_object_or_404(User, username=self.kwargs['username'])
+
     def get_queryset(self) -> QuerySet:
         """Получить кверисет с постами определенного пользователя.
 
         Автор видит все свои посты, включая отложенные,
         а остальные пользователи — только опубликованные.
         """
-        self.profile_user = get_object_or_404(
-            User, username=self.kwargs['username'])
         if self.request.user == self.profile_user:
-            return (
-                Post
-                .objects
-                .filter(author=self.profile_user)
-                .annotate(comment_count=Count('comments'))
-                .select_related('location', 'author', 'category')
-                .order_by('-pub_date')
-            )
-        return (
-            get_published_posts()
-            .filter(author=self.profile_user)
-            .order_by('-pub_date')
-        )
+            queryset = get_posts_queryset(is_annotate=True)
+        else:
+            queryset = get_posts_queryset(is_filtered=True, is_annotate=True)
+        return queryset.filter(author=self.profile_user)
 
     def get_context_data(self, **kwargs: dict) -> dict:
         """Добавить объект пользователя в словарь контекста."""
@@ -153,7 +106,7 @@ class IndexListView(ListView):
 
     def get_queryset(self) -> QuerySet:
         """Получить список опбликованных постов."""
-        return get_published_posts()
+        return get_posts_queryset(is_filtered=True, is_annotate=True)
 
 
 class CategoryListView(ListView):
@@ -163,13 +116,19 @@ class CategoryListView(ListView):
     paginate_by = POSTS_LIMIT
     template_name = 'blog/category.html'
 
+    @cached_property
+    def category(self) -> Category:
+        """Получить объект категории."""
+        return get_object_or_404(
+            Category.objects.filter(is_published=True),
+            slug=self.kwargs['category_slug'])
+
     def get_queryset(self) -> QuerySet:
         """Получить кверисет с постами определенной категории."""
-        self.category = get_object_or_404(
-            Category.objects.filter(is_published=True),
-            slug=self.kwargs['category_slug']
+        return (
+            get_posts_queryset(is_filtered=True, is_annotate=True)
+            .filter(category=self.category)
         )
-        return get_published_posts().filter(category=self.category)
 
     def get_context_data(self, **kwargs: dict) -> dict:
         """Добавить объект категории в словарь контекста."""
@@ -189,19 +148,17 @@ class PostDetailView(DetailView):
 
     def get_object(self, queryset: QuerySet = None) -> Post:
         """Получение объекта поста с проверкой автора и флага опубликовано."""
-        if self.request.user.is_authenticated:
-            queryset = (
-                get_published_posts()
-                | Post.objects.filter(author=self.request.user).select_related(
-                    'location', 'author', 'category'
-                )
-            )
-        else:
-            queryset = get_published_posts()
-        return get_object_or_404(
-            queryset,
+        needed_post = get_object_or_404(
+            get_posts_queryset(is_filtered=False, is_annotate=True),
             pk=self.kwargs['post_id']
         )
+        if self.request.user != needed_post.author and (
+            not needed_post.is_published
+            or not needed_post.category.is_published
+            or needed_post.pub_date > timezone.now()
+        ):
+            raise Http404()
+        return needed_post
 
     def get_context_data(self, **kwargs) -> dict:
         """Добавить форму для комментариев в контекст шаблона."""
@@ -231,7 +188,7 @@ class PostCreateView(LoginRequiredMixin, CreateView):
         )
 
 
-class PostUpdateView(OnlyAuthorMixin, PostObjectMixin, UpdateView):
+class PostUpdateView(OnlyAuthorMixin, UpdateView):
     """CBV для редактирования постов.
 
     Доступно только для автора поста. Если пользователь не автор -
@@ -241,6 +198,7 @@ class PostUpdateView(OnlyAuthorMixin, PostObjectMixin, UpdateView):
     model = Post
     form_class = PostForm
     template_name = 'blog/create.html'
+    pk_url_kwarg = 'post_id'
 
     def get_success_url(self) -> str:
         """Настроить динамический редирект после редактирования публикации."""
@@ -250,7 +208,7 @@ class PostUpdateView(OnlyAuthorMixin, PostObjectMixin, UpdateView):
         )
 
 
-class PostDeleteView(OnlyAuthorMixin, PostObjectMixin, DeleteView):
+class PostDeleteView(OnlyAuthorMixin, DeleteView):
     """CBV для удаления поста.
 
     Доступно только для автора поста. Если пользователь не автор -
@@ -259,6 +217,7 @@ class PostDeleteView(OnlyAuthorMixin, PostObjectMixin, DeleteView):
 
     model = Post
     template_name = 'blog/create.html'
+    pk_url_kwarg = 'post_id'
 
     def get_success_url(self) -> str:
         """Настроить динамический редирект после удаления публикации."""
@@ -272,18 +231,12 @@ class CommentCreateView(LoginRequiredMixin, CommentMixin, CreateView):
     """CBV для добавления комментария."""
 
     form_class = CommentForm
-    comment_post = None
     template_name = 'blog/detail.html'
-
-    def dispatch(self, request: HttpRequest, *args, **kwargs) -> HttpResponse:
-        """Найти нужный пост в самом начале запроса."""
-        self.comment_post = get_object_or_404(Post, pk=self.kwargs['post_id'])
-        return super().dispatch(request, *args, **kwargs)
 
     def form_valid(self, form: CommentForm) -> HttpResponse:
         """Присвоить объекту комментария автора и пост."""
         form.instance.author = self.request.user
-        form.instance.post = self.comment_post
+        form.instance.post = get_object_or_404(Post, pk=self.kwargs['post_id'])
         return super().form_valid(form)
 
 

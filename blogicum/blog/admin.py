@@ -2,7 +2,7 @@
 
 from django.contrib import admin
 
-from .models import Category, Location, Post
+from .models import Category, Comment, Location, Post
 
 COMMON_FIELDS = ('is_published', 'created_at')
 
@@ -57,13 +57,22 @@ class PostAdmin(BaseAdmin):
         'author__username',
         'category__title',
         'text',
-        'pub_date',
     )
 
     list_filter = (
-        'author__username',
+        'author',
         'category',
         'pub_date',
     ) + BaseAdmin.list_filter
 
     list_select_related = ('author', 'location', 'category',)
+
+
+@admin.register(Comment)
+class CommentAdmin(admin.ModelAdmin):
+    """Конфигурация отображения комментариев в административной панели."""
+
+    list_display = ('text', 'post', 'created_at', 'author')
+    search_fields = ('post__title', 'author__username', 'text')
+    list_select_related = ('post', 'author')
+    list_filter = ('created_at', 'author')

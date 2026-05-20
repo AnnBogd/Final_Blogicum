@@ -1,6 +1,6 @@
 """URL для приложения blog."""
 
-from django.urls import path
+from django.urls import include, path
 
 from .views import (
     CategoryListView,
@@ -18,6 +18,35 @@ from .views import (
 
 app_name = 'blog'
 
+posts_pattern_urls = [
+    path(
+        'edit_comment/<int:comment_id>/',
+        CommentUpdateView.as_view(),
+        name='edit_comment'
+    ),
+    path(
+        'delete_comment/<int:comment_id>/',
+        CommentDeleteView.as_view(),
+        name='delete_comment'
+    ),
+    path(
+        'comment/',
+        CommentCreateView.as_view(),
+        name='add_comment'
+    ),
+    path(
+        'delete/',
+        PostDeleteView.as_view(),
+        name='delete_post'
+    ),
+    path(
+        'edit/',
+        PostUpdateView.as_view(),
+        name='edit_post'
+    ),
+    path('', PostDetailView.as_view(), name='post_detail'),
+]
+
 urlpatterns = [
     path('posts/create/', PostCreateView.as_view(), name='create_post'),
     path(
@@ -25,38 +54,12 @@ urlpatterns = [
         ProfileUpdateView.as_view(),
         name='edit_profile'
     ),
-    path(
-        'posts/<int:post_id>/edit_comment/<int:comment_id>/',
-        CommentUpdateView.as_view(),
-        name='edit_comment'
-    ),
-    path(
-        'posts/<int:post_id>/delete_comment/<int:comment_id>/',
-        CommentDeleteView.as_view(),
-        name='delete_comment'
-    ),
-    path(
-        'posts/<int:post_id>/comment/',
-        CommentCreateView.as_view(),
-        name='add_comment'
-    ),
-    path(
-        'posts/<int:post_id>/delete/',
-        PostDeleteView.as_view(),
-        name='delete_post'
-    ),
-    path(
-        'posts/<int:post_id>/edit/',
-        PostUpdateView.as_view(),
-        name='edit_post'
-    ),
-    path('posts/<int:post_id>/', PostDetailView.as_view(), name='post_detail'),
+    path('posts/<int:post_id>/', include(posts_pattern_urls)),
     path(
         'category/<slug:category_slug>/',
         CategoryListView.as_view(),
         name='category_posts'
     ),
-
     path(
         'profile/<str:username>/',
         ProfileListView.as_view(),
