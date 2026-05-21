@@ -62,11 +62,11 @@ class ProfileListView(ListView):
         Автор видит все свои посты, включая отложенные,
         а остальные пользователи — только опубликованные.
         """
-        if self.request.user == self.profile_user:
-            queryset = get_posts_queryset(is_annotate=True)
-        else:
-            queryset = get_posts_queryset(is_filtered=True, is_annotate=True)
-        return queryset.filter(author=self.profile_user)
+        return (
+            get_posts_queryset(
+                is_filtered=self.request.user != self.profile_user,
+                is_annotate=True)
+            .filter(author=self.profile_user))
 
     def get_context_data(self, **kwargs: dict) -> dict:
         """Добавить объект пользователя в словарь контекста."""
@@ -149,7 +149,7 @@ class PostDetailView(DetailView):
     def get_object(self, queryset: QuerySet = None) -> Post:
         """Получение объекта поста с проверкой автора и флага опубликовано."""
         needed_post = get_object_or_404(
-            get_posts_queryset(is_filtered=False, is_annotate=True),
+            get_posts_queryset(is_filtered=False, is_annotate=False),
             pk=self.kwargs['post_id']
         )
         if self.request.user != needed_post.author and (
